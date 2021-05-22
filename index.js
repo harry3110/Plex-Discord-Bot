@@ -18,8 +18,10 @@ var plex = new PlexAPI({
     token: process.env.PLEX_TOKEN
 })
 
-var playOptions = []
+// searchResults contains all of the songs IDs of a returned search, currentSearch is the query of the search
+var searchResults = []
 var currentSearch = null
+var searchGuildMember = null
 
 // Complex
 // var plex = new PlexAPI({
@@ -39,6 +41,7 @@ var currentSearch = null
 // });
 
 const plex_url = (middle, protocol = "http") => protocol + "://" + process.env.HOSTNAME + ":" + process.env.PORT + "" + middle + "?X-Plex-Token=" + process.env.PLEX_TOKEN
+const music_url = (middle) => "http://arcadia:32400" + middle + "?X-Plex-Token=" + process.env.PLEX_TOKEN
 
 // Functions
 const numberToEmoji = function (num) {
@@ -124,6 +127,7 @@ client.on("ready", async () => {
      * /move            Move a song to a different postition in the queue
      * /remove          Remove a song from the queue
      * /skip
+     * /viewpast        Show the last 10 played songs, and if they were skipped (maybe tick or cross if played fully)
      * 
      * 
      * Other things:
@@ -191,14 +195,12 @@ client.on("ready", async () => {
             }
 
             var songTitle = options[0]['value']
-            // console.log("/search?type=10&query=" + songTitle + "&X-Plex-Container-Start=0&X-Plex-Container-Size=" + process.env.CHOICE)
 
+            /**
+             * Plex search query
+             */
             plex.query("/search?type=10&query=" + songTitle + "&X-Plex-Container-Start=0&X-Plex-Container-Size=" + process.env.CHOICE).then(async function (MediaContainerResult) {
                 var results = MediaContainerResult["MediaContainer"]["Metadata"]
-
-                // var result = results[0]
-                // console.log(result)
-
                 // console.log(plex_url(result["thumb"], "attachment"))
 
                 // Title:           title
@@ -208,13 +210,10 @@ client.on("ready", async () => {
                 // Album cover:     thumb
 
                 fields = []
-                songIds = []
                 invalid = false;
 
-                console.log(playOptions)
-
                 // If there is already a search, don't overwrite it
-                if (playOptions.length > 0) {
+                if (searchResults.length > 0) {
                     await client.api.interactions(interaction.id, interaction.token).callback.post({
                         data: {
                             type: 4,
@@ -231,14 +230,19 @@ client.on("ready", async () => {
                         }
                     })
                     
-                } else {
+                } /*else if (results.length == 1) {
+                    // @TODO Automatically choose the first option, if there is only one available
+                    
+                }*/ else {
                     // Used in case the search is cancelled
                     currentSearch = songTitle
 
+                    // Get guild member (to join a voice channel) (from https://stackoverflow.com/questions/66561431/discord-js-voice-channel-with-slash-commands)
+                    var guild = client.guilds.cache.get(interaction.guild_id)
+                    searchGuildMember = guild.member(interaction.member.user.id)
+
                     // Catch if there are no items in the array
-                    try {
-                        // console.log(results[0])
-    
+                    try {    
                         for (var i = 0; i < results.length; i++) {
                             if (results[i]["originalTitle"] == undefined) {
                                 var artist = results[i]["grandparentTitle"]
@@ -246,7 +250,8 @@ client.on("ready", async () => {
                                 var artist = results[i]["originalTitle"]
                             }
     
-                            playOptions.push(results[i]["Media"][0]["id"])
+                            // searchResults.push(results[i]["Media"][0]["id"])
+                            searchResults.push(MediaContainerResult.MediaContainer.Metadata[i])
         
                             fields.push({
                                 name: "[" + (i + 1) + "] " + results[i]["title"],
@@ -332,11 +337,16 @@ client.on('message', message => {
                         .setDescription("Hey! That's not an option you can do, I think you're trying to break me!")
                     )
 
-                    playOptions = []
+                    // Remove all reactions and add the one that was selected
+                    message.reactions.removeAll()
+                    message.react("❌")
+
+                    searchResults = []
                     currentSearch = null
                     return
                 }
 
+                // Remove all reactions and add the one that was selected
                 message.reactions.removeAll()
                 message.react(emoji)
 
@@ -350,58 +360,107 @@ client.on('message', message => {
                         .setDescription('The search for "' + currentSearch + '" was stopped')
                     )
 
-                    playOptions = []
+                    searchResults = []
                     currentSearch = null
-                } else {
-                    /**
-                     * If a song was selected
-                     */
-                    // Get the correct song id
-                    songId = playOptions[emojiToNumber(emoji)]
-    
-                    // Clear the play queue
-                    playOptions = []
-                    currentSearch = null
-                    
-                    // Get song information (each song in queue should have information for title, artist, album, thumbnail/album url, duration)
-                    message.channel.send(new DiscordJS.MessageEmbed()
-                        .setColor(colors["aqua"])
-                        .setTitle('Added to queue!')
-                        .addField( 'Title', 'Artist')
-                        .setThumbnail('https://i.imgur.com/wSTFkRM.png')
-                    )
-
-                    plex.query("/library/metadata/41369").then(async function (MediaContainerResult) {
-                        var track = MediaContainerResult["MediaContainer"]["Track"]
-
-                        // console.log(track["Media"])
-
-                        // Play song
-                        // var voiceChannel = message.member.voice.channel
-                    })
+                    return
                 }
+                
+                /**
+                 * If a song was selected
+                 */
+                // Get the correct song id
+                songData = searchResults[emojiToNumber(emoji) - 1]
+
+                // Clear the play queue
+                searchResults = []
+                currentSearch = null
+                
+                // Get song information (each song in queue should have information for title, artist, album, thumbnail/album url, duration)
+                addSongToQueue(songData, message, searchGuildMember)
 
                 return
             })
-            .catch(collected => {
-                /**
-                 * If a song searched timed out
-                 */
-                playOptions = []
-                currentSearch = null
+            // .catch(collected => {
+            //     /**
+            //      * If a song searched timed out
+            //      */
+            //     searchResults = []
+            //     currentSearch = null
 
-                message.channel.send(new DiscordJS.MessageEmbed()
-                    .setColor(colors["red"])
-                    .setTitle('Song choice cancelled')
-                    .setDescription("Song search timed out")
-                )
-             })
+            //     message.channel.send(new DiscordJS.MessageEmbed()
+            //         .setColor(colors["red"])
+            //         .setTitle('Song choice cancelled')
+            //         .setDescription("Song search timed out")
+            //     )
+            // })
         }
     }
 })
 
-function addSongToQueue(songId, title = null, artist = null) {
+// Currently just plays a song, without a queue
+async function addSongToQueue(songData, message, member) {
+    var textChannel = message.channel
+    var voiceChannel = member.voice.channel
 
+    // console.log(message)
+    // console.log(member)
+
+    // Return if the user is not in a voice channel
+    if (!voiceChannel) {
+        message.channel.send(new DiscordJS.MessageEmbed()
+            .setColor(colors["red"])
+            .setTitle("❌ Song choice cancelled")
+            .setDescription("To play music you need to be in a voice channel!")
+        )
+
+        return
+	}
+
+    await voiceChannel.join().then(connection => {
+        console.log(          songData.Media[0].Part[0].key)
+        console.log(music_url(songData.Media[0].Part[0].key))
+        const dispatcher = connection.play(music_url(songData.Media[0].Part[0].key))
+
+
+        dispatcher.on("start", () => {
+            console.log(songData["title"] + " is now playing!")
+        })
+
+        dispatcher.on("finish", () => {
+            console.log(songData["title"] + " has finished playing!")
+        })
+        
+        dispatcher.on('error', console.error);
+    })
+    .catch(err => console.log(err))
+
+
+
+    // Send an embedded message to the user to say what is playing
+    if (songData["originalTitle"] == undefined) {
+        var artist = songData["grandparentTitle"]
+    } else {
+        var artist = songData["originalTitle"]
+    }
+
+    textChannel.send(new DiscordJS.MessageEmbed()
+        .setColor(colors["aqua"])
+        .setTitle('Added to queue!')
+        .addField(songData["title"], artist)
+        .setThumbnail(/*'https://i.imgur.com/wSTFkRM.png'*/ songData["thumb"])
+    )
+    
+    
+
+    /*plex.query("/library/metadata/" + songData).then(async function (MediaContainerResult) {
+        console.log(MediaContainerResult)
+        console.log(MediaContainerResult["MediaContainer"]["Metadata"])
+
+        // Play song
+        // var voiceChannel = message.member.voice.channel
+
+        // Play: \\ARCADIA\Media\Music\Artists\Adele\25 (2015)\01 Hello.flac
+    })*/
 }
 
 const reply = async (interaction, response) => {
