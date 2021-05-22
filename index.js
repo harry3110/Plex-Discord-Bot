@@ -222,7 +222,7 @@ client.on("ready", async () => {
                                 flags: flagsValue,
                                 embeds: [
                                     {
-                                        title: "Choose a song",
+                                        title: "Song choice cancelled",
                                         description: "There is already a search, close that before starting a new one",
                                         color: colors["red"]
                                     }
@@ -322,18 +322,35 @@ client.on('message', message => {
 
                 emoji = reaction.emoji.name
 
+                if (emojiToNumber(emoji) > embed.fields.length) {
+                    /**
+                     * If a reaction other than 1-[max options] was chosen
+                     */
+                    message.channel.send(new DiscordJS.MessageEmbed()
+                        .setColor(colors["red"])
+                        .setTitle("❌ Song choice cancelled")
+                        .setDescription("Hey! That's not an option you can do, I think you're trying to break me!")
+                    )
+
+                    playOptions = []
+                    currentSearch = null
+                    return
+                }
+
+                message.reactions.removeAll()
+                message.react(emoji)
+
                 if (emoji == "❌") {
                     /**
                      * If the message was cancelled
                      */
-                    // Send the user a message saying it was cancelled
                     message.channel.send(new DiscordJS.MessageEmbed()
                         .setColor(colors["red"])
                         .setTitle('Song choice cancelled')
                         .setDescription('The search for "' + currentSearch + '" was stopped')
-                        .setTimestamp()
                     )
 
+                    playOptions = []
                     currentSearch = null
                 } else {
                     /**
@@ -341,10 +358,10 @@ client.on('message', message => {
                      */
                     // Get the correct song id
                     songId = playOptions[emojiToNumber(emoji)]
-                    console.log(emojiToNumber(emoji) + ": " + songId)
     
                     // Clear the play queue
                     playOptions = []
+                    currentSearch = null
                     
                     // Get song information (each song in queue should have information for title, artist, album, thumbnail/album url, duration)
                     message.channel.send(new DiscordJS.MessageEmbed()
@@ -353,9 +370,32 @@ client.on('message', message => {
                         .addField( 'Title', 'Artist')
                         .setThumbnail('https://i.imgur.com/wSTFkRM.png')
                     )
+
+                    plex.query("/library/metadata/41369").then(async function (MediaContainerResult) {
+                        var track = MediaContainerResult["MediaContainer"]["Track"]
+
+                        // console.log(track["Media"])
+
+                        // Play song
+                        // var voiceChannel = message.member.voice.channel
+                    })
                 }
+
+                return
             })
-            .catch(collected => { })
+            .catch(collected => {
+                /**
+                 * If a song searched timed out
+                 */
+                playOptions = []
+                currentSearch = null
+
+                message.channel.send(new DiscordJS.MessageEmbed()
+                    .setColor(colors["red"])
+                    .setTitle('Song choice cancelled')
+                    .setDescription("Song search timed out")
+                )
+             })
         }
     }
 })
