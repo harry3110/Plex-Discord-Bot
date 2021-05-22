@@ -317,55 +317,45 @@ client.on('message', message => {
         
             // Waits for a reaction
             message.awaitReactions(filter, { max: 1, time: 30000, errors: ['time'] })
-                .then(collected => {
-                    const reaction = collected.first();
+            .then(collected => {
+                const reaction = collected.first();
 
-                    emoji = reaction.emoji.name
+                emoji = reaction.emoji.name
 
-                    console.log(emoji)
+                if (emoji == "❌") {
+                    /**
+                     * If the message was cancelled
+                     */
+                    // Send the user a message saying it was cancelled
+                    message.channel.send(new DiscordJS.MessageEmbed()
+                        .setColor(colors["red"])
+                        .setTitle('Song choice cancelled')
+                        .setDescription('The search for "' + currentSearch + '" was stopped')
+                        .setTimestamp()
+                    )
 
-                    if (emoji == "❌") {
-                        // Send the user a message saying it was cancelled
-                        embed = new DiscordJS.MessageEmbed()
-                            .setColor(colors["red"])
-                            .setTitle('Song choice cancelled')
-                            .setDescription('The search for "' + currentSearch + '" was stopped')
-                            .setTimestamp()
-
-                        message.channel.send(embed)
-
-                        currentSearch = null
-                    } else {
-                        // Get the correct song id
-                        songId = playOptions[emojiToNumber(emoji)]
-                        console.log(emojiToNumber(emoji) + ": " + songId)
-        
-                        // Clear the play queue
-                        playOptions = []
-        
-                        // message.channel.send(
-                        //     new Discord.MessageEmbed()
-                        //         .setColor(colors["aqua"])
-                        //         .setTitle('Some title')
-                        //         .setURL('https://discord.js.org/')
-                        //         .setAuthor('Some name', 'https://i.imgur.com/wSTFkRM.png', 'https://discord.js.org')
-                        //         .setDescription('Some description here')
-                        //         .setThumbnail('https://i.imgur.com/wSTFkRM.png')
-                        //         .addFields(
-                        //             { name: 'Regular field title', value: 'Some value here' },
-                        //             { name: '\u200B', value: '\u200B' },
-                        //             { name: 'Inline field title', value: 'Some value here', inline: true },
-                        //             { name: 'Inline field title', value: 'Some value here', inline: true },
-                        //         )
-                        //         .addField('Inline field title', 'Some value here', true)
-                        //         .setImage('https://i.imgur.com/wSTFkRM.png')
-                        //         .setTimestamp()
-                        //         .setFooter('Some footer text here', 'https://i.imgur.com/wSTFkRM.png')
-                        //     )
-                    }
-                }).catch(collected => { })
-
-            return
+                    currentSearch = null
+                } else {
+                    /**
+                     * If a song was selected
+                     */
+                    // Get the correct song id
+                    songId = playOptions[emojiToNumber(emoji)]
+                    console.log(emojiToNumber(emoji) + ": " + songId)
+    
+                    // Clear the play queue
+                    playOptions = []
+                    
+                    // Get song information (each song in queue should have information for title, artist, album, thumbnail/album url, duration)
+                    message.channel.send(new DiscordJS.MessageEmbed()
+                        .setColor(colors["aqua"])
+                        .setTitle('Added to queue!')
+                        .addField( 'Title', 'Artist')
+                        .setThumbnail('https://i.imgur.com/wSTFkRM.png')
+                    )
+                }
+            })
+            .catch(collected => { })
         }
     }
 })
