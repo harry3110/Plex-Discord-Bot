@@ -5,12 +5,14 @@ require('dotenv').config()
 // Aqua color
 colors = {
     'aqua': 0x5abdd1,
-    'red': 0xa11a1a
+    'red': 0xa11a1a,
+    'orange': 0xdbbb1a
 }
 
 // Plex options
 var songQueue = []
-var status = "" // "", "playing", "paused"
+var queuePointer = 0
+var status = null // "", "playing", "paused"
 
 // Simple (may be all I need)
 var plex = new PlexAPI({
@@ -22,6 +24,9 @@ var plex = new PlexAPI({
 var searchResults = []
 var currentSearch = null
 var searchGuildMember = null
+
+var textChannel = null
+var voiceChannel = null
 
 // Complex
 // var plex = new PlexAPI({
@@ -120,6 +125,8 @@ client.on("ready", async () => {
      * /playnext    <name> [artist] [no. of results]
      * /playfirst   <name> [artist] [no. of results]  (play the first result of the query)
      * /secretplay  <name> [artist] [no. of results]
+     * /album       <name> [random yes/no]
+     * /artist      <name> [random yes/no]
      * /hello command   Joins, says "hello" (from Adele - Hello), then leaves
      * /queue
      * /now             Shows what is currently playing
@@ -178,6 +185,55 @@ client.on("ready", async () => {
         }
     })
 
+    // Hello
+    await app.post({
+        data: {
+            name: "hello",
+            description: "Hello"
+        }
+    })
+
+    // Leave the voice channel
+    await app.post({
+        data: {
+            name: "leave",
+            description: "Stop music and leave the voice channel"
+        }
+    })
+
+    // Skip the current song
+    await app.post({
+        data: {
+            name: "skip",
+            description: "Skips the current song, and plays the next"
+        }
+    })
+
+    // Shows the song currently playing
+    await app.post({
+        data: {
+            name: "now",
+            description: "Shows the song currently playing"
+        }
+    })
+
+    // View the current song queue
+    await app.post({
+        data: {
+            name: "queue",
+            description: "View the current song queue"
+        }
+    })
+
+    // Force cancels the current search in case it gets stuck (mainly for debugging)
+    // This will cause an error /cancel is used when there is a search and then a reaction is added to the cancelled search.
+    await app.post({
+        data: {
+            name: "cancel",
+            description: "Force cancels the current search in case it gets stuck"
+        }
+    })
+
     client.ws.on('INTERACTION_CREATE', async interaction => {
         const { name, options } = interaction.data
         const command = name.toLowerCase()
@@ -187,7 +243,55 @@ client.on("ready", async () => {
         if (command === "ping") {
             await reply(interaction, "Pong!")
         }
+        else if (command === "hello") {
+            if (status == null) {
+                await client.api.interactions(interaction.id, interaction.token).callback.post({
+                    data: {
+                        type: 4,
+                        data: {
+                            flags: 64,
+                            embeds: [
+                                {
+                                    title: "Hello",
+                                    color: colors["aqua"],
+                                }
+                            ]
+                        }
+                    }
+                })
+    
+                var guild = client.guilds.cache.get(interaction.guild_id)
+                var voiceChannel = guild.member(interaction.member.user.id).voice.channel
+    
+                await voiceChannel.join().then(connection => {
+                    const dispatcher = connection.play("./hello.flac")
+    
+                    dispatcher.on("finish", () => {
+                        voiceChannel.leave()
+                    })
+                })
+            } else {
+                await client.api.interactions(interaction.id, interaction.token).callback.post({
+                    data: {
+                        type: 4,
+                        data: {
+                            flags: 64,
+                            embeds: [
+                                {
+                                    title: "Hello",
+                                    description: "There's already a song playing, try using this command when nothing is playing.",
+                                    color: colors["red"],
+                                }
+                            ]
+                        }
+                    }
+                })
+            }
+            
+        }
         else if (command === "play" || command === "playnext" || command === "secretplay") {
+            console.log("Search initialised")
+
             if (command === "secretplay") {
                 flagsValue = 64
             } else {
@@ -302,6 +406,168 @@ client.on("ready", async () => {
                     // client.user.setActivity(result["title"] + " - " + result["grandparentTitle"])
                 }
             })
+        } else if (command === "leave") {
+            console.log("Leaving voice channel")
+
+            await client.api.interactions(interaction.id, interaction.token).callback.post({
+                data: {
+                    type: 4,
+                    data: {
+                        embeds: [
+                            {
+                                title: "Leaving the voice chat...",
+                                color: colors["red"],
+                            }
+                        ]
+                    }
+                }
+            })
+
+            var guild = client.guilds.cache.get(interaction.guild_id)
+            var voiceChannel = guild.member(interaction.member.user.id).voice.channel
+
+            await voiceChannel.leave()
+
+            client.user.setActivity("the waiting game", {
+                type: "PLAYING"
+            })
+        } else if (command === "now") {
+            console.log("Displaying the currently playing song")
+
+            if (songData["originalTitle"] == undefined) {
+                var artist = songData["grandparentTitle"]
+            } else {
+                var artist = songData["originalTitle"]
+            }
+
+            if (songData["title"] == "") {
+                title = "<no title>"
+            } else {
+                title = songData["title"]
+            }
+
+            await client.api.interactions(interaction.id, interaction.token).callback.post({
+                data: {
+                    type: 4,
+                    data: {
+                        embeds: [
+                            {
+                                title: "Now playing...",
+                                color: colors["orange"],
+                                fields: [
+                                    {
+                                        name: title,
+                                        value: artist
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            })
+        } else if (command === "skip") {
+            console.log("Skipping the current song")
+
+            queuePointer++
+
+            if (typeof songData[queuePointer] === "undefined") {
+                // If there are no songs left in the queue
+                var title = "No more songs in queue, leaving voice chat"
+
+                status = null
+                voiceChannel.leave()
+            } else {
+                // If there is a song next in the queue
+                var title = "Skipping song..."
+
+                playSong()
+            }
+
+            await client.api.interactions(interaction.id, interaction.token).callback.post({
+                data: {
+                    type: 4,
+                    data: {
+                        embeds: [
+                            {
+                                title: title,
+                                color: colors["orange"],
+                            }
+                        ]
+                    }
+                }
+            })
+        } else if (command === "cancel") {
+            console.log("Force cancelling search")
+
+            searchResults = []
+            currentSearch = null
+
+            await client.api.interactions(interaction.id, interaction.token).callback.post({
+                data: {
+                    type: 4,
+                    data: {
+                        embeds: [
+                            {
+                                title: "Force cancelling search",
+                                color: colors["red"],
+                            }
+                        ]
+                    }
+                }
+            })
+        } else if (command === "queue") {
+            console.log("Displaying queued songs")
+
+            fields = []
+
+            // If there are enough songs in the queue to display an embedded message
+            if (queuePointer + 1 <= songQueue.length) {
+                var description = ""
+
+                for (let i = queuePointer; i < songQueue.length; i++) {
+                    // Get the song artist
+                    if (songQueue[i]["originalTitle"] == undefined) {
+                        var artist = songQueue[i]["grandparentTitle"]
+                    } else {
+                        var artist = songQueue[i]["originalTitle"]
+                    }
+    
+                    // Get the song title
+                    if (songData["title"] == "") {
+                        title = "<no title>"
+                    } else {
+                        title = songData["title"]
+                    }
+    
+                    fields.push({
+                        name: songQueue[i]["title"],
+                        value: artist + " (" + songQueue[i]["parentTitle"] + ")"
+                    })
+                }
+            } else {
+                var description = "There are no more songs in the queue."
+            }
+            
+
+            await client.api.interactions(interaction.id, interaction.token).callback.post({
+                data: {
+                    type: 4,
+                    data: {
+                        // flags: 64,
+                        description: description,
+                        embeds: [
+                            {
+                                title: "Song queue",
+                                color: colors["orange"],
+                                fields: fields,
+                                footer: {
+                                    text: "To add to the queue, type /play with the song you would like"
+                                }
+                            }
+                        ]
+                    }
+                }
+            })
         }
     })
 })
@@ -336,10 +602,10 @@ client.on('message', message => {
                         .setTitle("❌ Song choice cancelled")
                         .setDescription("Hey! That's not an option you can do, I think you're trying to break me!")
                     )
-
-                    // Remove all reactions and add the one that was selected
+                    
+                    // If there was an error, no reactions should be added
                     message.reactions.removeAll()
-                    message.react("❌")
+                    // message.react("❌")
 
                     searchResults = []
                     currentSearch = null
@@ -380,27 +646,27 @@ client.on('message', message => {
 
                 return
             })
-            // .catch(collected => {
-            //     /**
-            //      * If a song searched timed out
-            //      */
-            //     searchResults = []
-            //     currentSearch = null
+            .catch(collected => {
+                /**
+                 * If a song searched timed out
+                 */
+                searchResults = []
+                currentSearch = null
 
-            //     message.channel.send(new DiscordJS.MessageEmbed()
-            //         .setColor(colors["red"])
-            //         .setTitle('Song choice cancelled')
-            //         .setDescription("Song search timed out")
-            //     )
-            // })
+                message.channel.send(new DiscordJS.MessageEmbed()
+                    .setColor(colors["red"])
+                    .setTitle('Song choice cancelled')
+                    .setDescription("Song search timed out")
+                )
+            })
         }
     }
 })
 
 // Currently just plays a song, without a queue
 async function addSongToQueue(songData, message, member) {
-    var textChannel = message.channel
-    var voiceChannel = member.voice.channel
+    textChannel = message.channel
+    voiceChannel = member.voice.channel
 
     // console.log(message)
     // console.log(member)
@@ -416,51 +682,93 @@ async function addSongToQueue(songData, message, member) {
         return
 	}
 
-    await voiceChannel.join().then(connection => {
-        console.log(          songData.Media[0].Part[0].key)
-        console.log(music_url(songData.Media[0].Part[0].key))
-        const dispatcher = connection.play(music_url(songData.Media[0].Part[0].key))
-
-
-        dispatcher.on("start", () => {
-            console.log(songData["title"] + " is now playing!")
-        })
-
-        dispatcher.on("finish", () => {
-            console.log(songData["title"] + " has finished playing!")
-        })
-        
-        dispatcher.on('error', console.error);
-    })
-    .catch(err => console.log(err))
-
-
-
-    // Send an embedded message to the user to say what is playing
+    // Gets the song artist, if null then the album artist
     if (songData["originalTitle"] == undefined) {
         var artist = songData["grandparentTitle"]
     } else {
         var artist = songData["originalTitle"]
     }
 
+    if (songData["title"] == "") {
+        title = "<no title>"
+    } else {
+        title = songData["title"]
+    }
+
     textChannel.send(new DiscordJS.MessageEmbed()
-        .setColor(colors["aqua"])
+        .setColor(colors["orange"])
         .setTitle('Added to queue!')
-        .addField(songData["title"], artist)
-        .setThumbnail(/*'https://i.imgur.com/wSTFkRM.png'*/ songData["thumb"])
+        .addField(title, artist)
+        // .setThumbnail(/*'https://i.imgur.com/wSTFkRM.png'*/ plex_url(songData["thumb"]))
     )
-    
-    
 
-    /*plex.query("/library/metadata/" + songData).then(async function (MediaContainerResult) {
-        console.log(MediaContainerResult)
-        console.log(MediaContainerResult["MediaContainer"]["Metadata"])
+    // Add the song to the queue
+    songQueue.push(songData)
 
-        // Play song
-        // var voiceChannel = message.member.voice.channel
+    // Play song if none playing
+    if (status == null) {
+        status = "playing"
+        playSong()
+    }
+}
 
-        // Play: \\ARCADIA\Media\Music\Artists\Adele\25 (2015)\01 Hello.flac
-    })*/
+// Play a song from the queue (gets the play song position from the queuePointer variable)
+async function playSong() {
+    songData = songQueue[queuePointer]
+
+    // Gets the song artist, if null then the album artist
+    if (songData["originalTitle"] == undefined) {
+        var artist = songData["grandparentTitle"]
+    } else {
+        var artist = songData["originalTitle"]
+    }
+
+    if (songData["title"] == "") {
+        title = "<no title>"
+    } else {
+        title = songData["title"]
+    }
+
+    await voiceChannel.join().then(connection => {
+        // console.log(          songData.Media[0].Part[0].key)
+        console.log(music_url(songData.Media[0].Part[0].key))
+        const dispatcher = connection.play(music_url(songData.Media[0].Part[0].key))
+
+        // Show that the track has changed
+        dispatcher.on("start", () => {
+            console.log('"' + title + '" is now playing!')
+
+            textChannel.send(new DiscordJS.MessageEmbed()
+                .setColor(colors["aqua"])
+                .setTitle('Now playing!')
+                .addField(title, artist)
+                // .setThumbnail(/*'https://i.imgur.com/wSTFkRM.png'*/ plex_url(songData["thumb"]))
+            )
+
+            client.user.setActivity(title, {
+                type: "PLAYING"
+            })
+        })
+
+        dispatcher.on("finish", () => {
+            console.log('"' + title + '" has finished playing!')
+            
+            // Always increase the queue pointer, ready for the next song
+            queuePointer++
+
+            if (typeof songData[queuePointer + 1] === "undefined") {
+                // If there are no songs left in the queue
+                status = null
+                return
+            }
+            
+            // Change the queue pointer to the next song, and then play it
+            playSong()
+        })
+        
+        dispatcher.on('error', console.error)
+    })
+    .catch(err => console.log(err))
 }
 
 const reply = async (interaction, response) => {
