@@ -229,6 +229,22 @@ client.on("ready", async () => {
         }
     })
 
+    // Pause the current song
+    await app.post({
+        data: {
+            name: "pause",
+            description: "Pause the current song"
+        }
+    })
+
+    // Resume the current song
+    await app.post({
+        data: {
+            name: "resume",
+            description: "Resume the current song"
+        }
+    })
+
     // Force cancels the current search in case it gets stuck (mainly for debugging)
     // This will cause an error /cancel is used when there is a search and then a reaction is added to the cancelled search.
     await app.post({
@@ -513,7 +529,7 @@ client.on("ready", async () => {
                     data: {
                         embeds: [
                             {
-                                title: title,
+                                title: "Resuming music..",
                                 color: colors["orange"],
                             }
                         ]
@@ -558,9 +574,9 @@ client.on("ready", async () => {
     
                     // Get the song title
                     if (songData["title"] == "") {
-                        title = "<no title>"
+                        var title = "<no title>"
                     } else {
-                        title = songData["title"]
+                        var title = songData["title"]
                     }
     
                     fields.push({
