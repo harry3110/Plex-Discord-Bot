@@ -6,15 +6,16 @@ require('dotenv').config()
 
 // Aqua color
 colors = {
-    'aqua': 0x5abdd1,
-    'red': 0xa11a1a,
-    'orange': 0xdbbb1a
+    'aqua': 0x5abdd1,       // For search and queue
+    'red': 0xa11a1a,        // For errors
+    'orange': 0xdbbb1a      // Currently playing
 }
 
 // Plex options
 var songQueue = []
 var queuePointer = 0
 var status = null // "", "playing", "paused"
+var pauseAfter = false
 
 // Simple (may be all I need)
 var plex = new PlexAPI({
@@ -145,14 +146,14 @@ client.on("ready", async () => {
     /**
      * [x] /play        <name> [artist] [no. of results]
      * [x] /playnext    <name> [artist] [no. of results]
-     * [ ] /playfirst   <name> [artist] [no. of results]  (play the first result of the query)
+     * [x] /playfirst   <name> [artist] [no. of results]  (play the first result of the query)
      * [ ] /secretplay  <name> [artist] [no. of results]
      * [ ] /album       <name> [random yes/no]
      * [ ] /artist      <name> [random yes/no]
      * [x] /hello command       Joins, says "hello" (from Adele - Hello), then leaves
      * [x] /queue
      * [x] /now                 Shows what is currently playing
-     * [ ] /pauseafter          Pause the playlist after the current one has finished
+     * [x] /pauseafter          Pause the playlist after the current one has finished
      * [ ] /move <old> <new>    Move a song to a different postition in the queue
      * [ ] /remove              Remove a song from the queue
      * [x] /skip
@@ -226,6 +227,14 @@ client.on("ready", async () => {
                     type: 3,
                 },
             ]
+        }
+    })
+
+    // Pause after current song has finished playing
+    await app.post({
+        data: {
+            name: "pauseafter",
+            description: "Pause the playlist after the current one has finished"
         }
     })
 
@@ -391,7 +400,7 @@ client.on("ready", async () => {
             
         }
         else if (command === "play" || command === "playnext" || command === "playfirst" || command === "secretplay") {
-            console.log("Search initialised")
+            console.log("Search initialised: " + options[0]['value'])
     
 
             // Get the voice channel of the user (or returns if not in a voice chanel)
@@ -526,7 +535,7 @@ client.on("ready", async () => {
                         }
 
                         // If the first option should be chosen automatically
-                        if (results.length === 1 || command === "playnext") {
+                        if (results.length === 1 || command === "playfirst" || command === "playnext") {
                             title = "Song automatically chosen" + (command == "playnext" ? " and will play next" : "")
 
                             description = null
@@ -700,6 +709,22 @@ client.on("ready", async () => {
                     }
                 }
             })
+        } else if (command === "pauseafter") {
+            pauseAfter = true
+
+            await client.api.interactions(interaction.id, interaction.token).callback.post({
+                data: {
+                    type: 4,
+                    data: {
+                        embeds: [
+                            {
+                                title: "Pausing the music after this song has finished!",
+                                color: colors["aqua"],
+                            }
+                        ]
+                    }
+                }
+            })
         } else if (command === "resume") {
             dispatcher.resume()
 
@@ -837,7 +862,6 @@ client.on('message', message => {
                     
                     // If there was an error, no reactions should be added
                     message.reactions.removeAll()
-                    // message.react("❌")
 
                     searchResults = []
                     currentSearch = null
@@ -939,7 +963,7 @@ async function addSongToQueue(songData, message, member) {
         var title = songData["title"]
     }
 
-    // If there is one or more items in the queue only show "Now playing" and not "Added to queue"
+    // If there is one or more items in the queue, only show "Now playing" and not "Added to queue"
     if (queuePointer + 1 <= songQueue.length) {
         // Download the file and then wait till its downloaded to add it to the embedded message
         downloadFile(plex_url(songData["thumb"], "https"), './images/temp.png').then(function () {
@@ -971,6 +995,16 @@ async function addSongToQueue(songData, message, member) {
 
 // Play a song from the queue (gets the play song position from the queuePointer variable)
 async function playSong() {
+    if (typeof songQueue[queuePointer] === 'undefined') {
+        textChannel.send(new DiscordJS.MessageEmbed()
+            .setColor(colors["red"])
+            .setTitle('No more songs left in queue!')
+        )
+
+        status = null
+        return
+    }
+
     songData = songQueue[queuePointer]
 
     // Gets the song artist, if null then the album artist
@@ -998,15 +1032,32 @@ async function playSong() {
 
             // Download the file and then wait till its downloaded to add it to the embedded message
             downloadFile(plex_url(songData["thumb"], "https"), './images/temp.png').then(function () {
-                // Create and send the embedded message
-                textChannel.send(new DiscordJS.MessageEmbed()
-                    .setColor(colors["orange"])
-                    .setTitle('Now playing!')
-                    .addField(title, artist)
-                    
-                    .attachFiles(new DiscordJS.MessageAttachment('./images/temp.png'))
-                    .setThumbnail("attachment://temp.png")
-                )
+                // If pauseAfter is true, then pause the song and tell the user
+                if (pauseAfter) {
+                    dispatcher.pause()
+    
+                    textChannel.send(new DiscordJS.MessageEmbed()
+                        .setColor(colors["orange"])
+                        .setTitle('Music has been paused!')
+                        .addField(title, artist)
+                        .setFooter("To resume playback, type /resume")
+                        
+                        .attachFiles(new DiscordJS.MessageAttachment('./images/temp.png'))
+                        .setThumbnail("attachment://temp.png")
+                    )
+
+                    pauseAfter = false
+                } else {
+                    // Create and send the embedded message
+                    textChannel.send(new DiscordJS.MessageEmbed()
+                        .setColor(colors["orange"])
+                        .setTitle('Now playing!')
+                        .addField(title, artist)
+
+                        .attachFiles(new DiscordJS.MessageAttachment('./images/temp.png'))
+                        .setThumbnail("attachment://temp.png")
+                    )
+                }
             })
 
             client.user.setActivity(title, {
@@ -1020,21 +1071,7 @@ async function playSong() {
             
             // Always increase the queue pointer, ready for the next song
             queuePointer++
-
-            try {
-                var testForNextSong = songData[queuePointer]
-
-                playSong()
-            } catch { 
-                // If there are no songs left in the queue
-                status = null
-
-                client.user.setActivity("the waiting game", {
-                    type: "PLAYING"
-                })
-
-                return
-            }
+            playSong()
         })
         
         dispatcher.on('error', console.error)
