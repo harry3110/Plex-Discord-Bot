@@ -143,20 +143,22 @@ client.on("ready", async () => {
     })
 
     /**
-     * /play        <name> [artist] [no. of results]
-     * /playnext    <name> [artist] [no. of results]
-     * /playfirst   <name> [artist] [no. of results]  (play the first result of the query)
-     * /secretplay  <name> [artist] [no. of results]
-     * /album       <name> [random yes/no]
-     * /artist      <name> [random yes/no]
-     * /hello command   Joins, says "hello" (from Adele - Hello), then leaves
-     * /queue
-     * /now             Shows what is currently playing
-     * /pauseafter      Pause the playlist after the current one has finished
-     * /move            Move a song to a different postition in the queue
-     * /remove          Remove a song from the queue
-     * /skip
-     * /viewpast        Show the last 10 played songs, and if they were skipped (maybe tick or cross if played fully)
+     * [x] /play        <name> [artist] [no. of results]
+     * [ ] /playnext    <name> [artist] [no. of results]
+     * [ ] /playfirst   <name> [artist] [no. of results]  (play the first result of the query)
+     * [ ] /secretplay  <name> [artist] [no. of results]
+     * [ ] /album       <name> [random yes/no]
+     * [ ] /artist      <name> [random yes/no]
+     * [x] /hello command       Joins, says "hello" (from Adele - Hello), then leaves
+     * [x] /queue
+     * [x] /now                 Shows what is currently playing
+     * [ ] /pauseafter          Pause the playlist after the current one has finished
+     * [ ] /move <old> <new>    Move a song to a different postition in the queue
+     * [ ] /remove              Remove a song from the queue
+     * [x] /skip
+     * [x] /pause
+     * [x] /resume
+     * [ ] /viewpast            Show the last 10 played songs, and if they were skipped (maybe tick or cross if played fully)
      * 
      * 
      * Other things:
@@ -496,10 +498,13 @@ client.on("ready", async () => {
                     var title = "Choose a song"
 
                     if (invalid) {
+                        title = "❌ " + title
                         description = "There are no songs available with that name"
                         footer = null
+                        var chosenColor = colors["red"]
                     } else {
                         description = null
+                        var chosenColor = colors["aqua"]
 
                         if (command === "secretplay") {
                             footer = {
@@ -528,7 +533,10 @@ client.on("ready", async () => {
                                     {
                                         title: title,
                                         description: description,
-                                        color: colors["aqua"],
+                                        author: {
+                                            name: 'Search for: ' + songTitle
+                                        },
+                                        color: chosenColor,
                                         fields: fields,
                                         // author: {
                                         //     name: "Your mom",
@@ -577,8 +585,11 @@ client.on("ready", async () => {
                 }
             })
 
-            var guild = client.guilds.cache.get(interaction.guild_id)
-            var voiceChannel = guild.member(interaction.member.user.id).voice.channel
+            // var guild = client.guilds.cache.get(interaction.guild_id)
+            // voiceChannel = guild.member(interaction.member.user.id).voice.channel
+
+            // songQueue = []
+            status = null 
 
             voiceChannel.leave()
 
@@ -588,8 +599,6 @@ client.on("ready", async () => {
 
             // Set queue pointer to the final song
             queuePointer = songQueue.length - 1
-
-            console.log(queuePointer)
         } else if (command === "now") {
             console.log("Displaying the currently playing song")
 
@@ -651,13 +660,15 @@ client.on("ready", async () => {
 
             var guild = client.guilds.cache.get(interaction.guild_id)
             voiceChannel = guild.member(interaction.member.user.id).voice.channel
-            
+
+            // Always advance the queue position
+            queuePointer++
+
             try {
                 // If this throws an error then there is no song next
-                var tester = songData[queuePointer + 1]["title"]
+                var tester = songQueue[queuePointer]["title"]
                 var title = "Skipping song..."
 
-                queuePointer++
                 playSong()
             } catch {
                 // If there are no songs left in the queue
@@ -935,18 +946,21 @@ async function addSongToQueue(songData, message, member) {
         var title = songData["title"]
     }
 
-    // Download the file and then wait till its downloaded to add it to the embedded message
-    downloadFile(plex_url(songData["thumb"], "https"), './images/temp.png').then(function () {
-        // Create and send the embedded message
-        textChannel.send(new DiscordJS.MessageEmbed()
-            .setColor(colors["aqua"])
-            .setTitle('Added to queue!')
-            .addField(title, artist)
-            
-            .attachFiles(new DiscordJS.MessageAttachment('./images/temp.png'))
-            .setThumbnail("attachment://temp.png")
-        )
-    })
+    // If there is one or more items in the queue
+    if (queuePointer + 1 <= songQueue.length) {
+        // Download the file and then wait till its downloaded to add it to the embedded message
+        downloadFile(plex_url(songData["thumb"], "https"), './images/temp.png').then(function () {
+            // Create and send the embedded message
+            textChannel.send(new DiscordJS.MessageEmbed()
+                .setColor(colors["aqua"])
+                .setTitle('Added to queue!')
+                .addField(title, artist)
+                
+                .attachFiles(new DiscordJS.MessageAttachment('./images/temp.png'))
+                .setThumbnail("attachment://temp.png")
+            )
+        })
+    }
     
     // Add the song to the queue or next if it is needed
     if (message.embeds[0].title == "Song automatically chosen and will play next") {
@@ -1012,7 +1026,7 @@ async function playSong() {
             // Always increase the queue pointer, ready for the next song
             queuePointer++
 
-            if (typeof songData[queuePointer + 1] === "undefined") {
+            if (typeof songData[queuePointer] === "undefined") {
                 // If there are no songs left in the queue
                 status = null
                 return
