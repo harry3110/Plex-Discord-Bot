@@ -144,7 +144,7 @@ client.on("ready", async () => {
 
     /**
      * [x] /play        <name> [artist] [no. of results]
-     * [ ] /playnext    <name> [artist] [no. of results]
+     * [x] /playnext    <name> [artist] [no. of results]
      * [ ] /playfirst   <name> [artist] [no. of results]  (play the first result of the query)
      * [ ] /secretplay  <name> [artist] [no. of results]
      * [ ] /album       <name> [random yes/no]
@@ -186,6 +186,22 @@ client.on("ready", async () => {
         data: {
             name: "play",
             description: "Play a song (or add it to the queue)",
+            options: [
+                {
+                    name: "title",
+                    description: "The title of the song",
+                    required: true,
+                    type: 3,
+                }
+            ]
+        }
+    })
+
+    // Secret play (only the user sending the command can see what's added)
+    await app.post({
+        data: {
+            name: "playfirst",
+            description: "Play (or add to queue) the first song of the search",
             options: [
                 {
                     name: "title",
@@ -374,7 +390,7 @@ client.on("ready", async () => {
             }
             
         }
-        else if (command === "play" || command === "playnext" || command === "secretplay") {
+        else if (command === "play" || command === "playnext" || command === "playfirst" || command === "secretplay") {
             console.log("Search initialised")
     
 
@@ -464,20 +480,13 @@ client.on("ready", async () => {
 
                     // Catch if there are no items in the array
                     try {
-                        for (var i = 0; i < results.length; i++) {
+                        for (var i = 0; i < (command == "playfirst" ? 1 : results.length); i++) {
                             // Get the available artist
                             if (results[i]["originalTitle"] == undefined) {
                                 var artist = results[i]["grandparentTitle"]
                             } else {
                                 var artist = results[i]["originalTitle"]
                             }
-
-                            // Does the same as above, if the above doesn't work
-                            // try {
-                            //     var artist = results[i]["grandparentTitle"]
-                            // } catch {
-                            //     var artist = results[i]["originalTitle"]
-                            // }
     
                             // searchResults.push(results[i]["Media"][0]["id"])
                             searchResults.push(results[i])
@@ -519,6 +528,7 @@ client.on("ready", async () => {
                         // If the first option should be chosen automatically
                         if (results.length === 1 || command === "playnext") {
                             title = "Song automatically chosen" + (command == "playnext" ? " and will play next" : "")
+
                             description = null
                             footer = null
                         }
@@ -539,7 +549,7 @@ client.on("ready", async () => {
                                         color: chosenColor,
                                         fields: fields,
                                         // author: {
-                                        //     name: "Your mom",
+                                        //     name: "Harry3110",
                                         //     url: "https://github.com/harry3110/",
                                         //     icon_url: "https://i.imgur.com/wSTFkRM.png"
                                         // },
@@ -549,8 +559,6 @@ client.on("ready", async () => {
                             }
                         }
                     })
-    
-                    // client.user.setActivity(result["title"] + " - " + result["grandparentTitle"])
                 }
             })
         } else if (command === "choice") {
@@ -621,22 +629,7 @@ client.on("ready", async () => {
                     data: {
                         type: 4,
                         data: {
-                            content: "Checking the song currently playing...",
-                            /* embeds: [
-                                {
-                                    title: "Now playing...",
-                                    color: colors["orange"],
-                                    thumbnail: {
-                                        url: "attachment://temp.png",
-                                    },
-                                    fields: [
-                                        {
-                                            name: title,
-                                            value: artist
-                                        }
-                                    ],
-                                }
-                            ] */
+                            content: "Checking the song currently playing..."
                         }
                     }
                 })
@@ -946,7 +939,7 @@ async function addSongToQueue(songData, message, member) {
         var title = songData["title"]
     }
 
-    // If there is one or more items in the queue
+    // If there is one or more items in the queue only show "Now playing" and not "Added to queue"
     if (queuePointer + 1 <= songQueue.length) {
         // Download the file and then wait till its downloaded to add it to the embedded message
         downloadFile(plex_url(songData["thumb"], "https"), './images/temp.png').then(function () {
@@ -981,10 +974,12 @@ async function playSong() {
     songData = songQueue[queuePointer]
 
     // Gets the song artist, if null then the album artist
-    if (songData["originalTitle"] == undefined) {
+    if (songData["grandparentTitle"] != undefined) {
         var artist = songData["grandparentTitle"]
-    } else {
+    } else if (songData["originalTitle"] != undefined) {
         var artist = songData["originalTitle"]
+    } else {
+        return
     }
 
     if (songData["title"] == "") {
@@ -999,7 +994,7 @@ async function playSong() {
 
         // Show that the track has changed
         dispatcher.on("start", () => {
-            console.log('"' + title + '" is now playing!')
+            console.log("[" + queuePointer + "]: " + '"' + title + '" is now playing!')
 
             // Download the file and then wait till its downloaded to add it to the embedded message
             downloadFile(plex_url(songData["thumb"], "https"), './images/temp.png').then(function () {
@@ -1026,14 +1021,20 @@ async function playSong() {
             // Always increase the queue pointer, ready for the next song
             queuePointer++
 
-            if (typeof songData[queuePointer] === "undefined") {
+            try {
+                var testForNextSong = songData[queuePointer]
+
+                playSong()
+            } catch { 
                 // If there are no songs left in the queue
                 status = null
+
+                client.user.setActivity("the waiting game", {
+                    type: "PLAYING"
+                })
+
                 return
             }
-            
-            // Change the queue pointer to the next song, and then play it
-            playSong()
         })
         
         dispatcher.on('error', console.error)
