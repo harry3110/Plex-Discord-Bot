@@ -1,5 +1,7 @@
 const DiscordJS = require('discord.js')
 const PlexAPI = require('plex-api')
+let fs = require('fs');
+const fetch = require('node-fetch');
 require('dotenv').config()
 
 // Aqua color
@@ -20,17 +22,6 @@ var plex = new PlexAPI({
     token: process.env.PLEX_TOKEN
 })
 
-// searchResults contains all of the songs IDs of a returned search, currentSearch is the query of the search
-var searchResults = []
-var currentSearch = null
-var searchGuildMember = null
-
-var textChannel = null
-var voiceChannel = null
-
-// To be able to pause and resume from anywhere
-var dispatcher
-
 // Complex
 // var plex = new PlexAPI({
 //     hostname: process.env.HOSTNAME,
@@ -48,7 +39,18 @@ var dispatcher
 //     }
 // });
 
-const plex_url = (middle, protocol = "http") => protocol + "://" + process.env.HOSTNAME + ":" + process.env.PORT + "" + middle + "?X-Plex-Token=" + process.env.PLEX_TOKEN
+// searchResults contains all of the songs IDs of a returned search, currentSearch is the query of the search
+var searchResults = []
+var currentSearch = null
+var searchGuildMember = null
+
+var textChannel = null
+var voiceChannel = null
+
+// To be able to pause and resume from anywhere
+var dispatcher
+
+const plex_url = (middle, protocol = "http") => protocol + "://" + process.env.HOSTNAME_REMOTE + ":" + process.env.PORT + "" + middle + "?X-Plex-Token=" + process.env.PLEX_TOKEN
 const music_url = (middle) => "http://arcadia:32400" + middle + "?X-Plex-Token=" + process.env.PLEX_TOKEN
 const hubSearch_url = (query) => "/hubs/search?query=" + query + "&includeExternalMedia=0&limit=" + process.env.CHOICE //&X-Plex-Token=${process.env.PLEX_TOKEN}"
 
@@ -81,6 +83,18 @@ const emojiToNumber = function (emoji) {
     else             { return false }
 }
 
+// Download the file asyncronously (from https://stackoverflow.com/questions/37614649/how-can-i-download-and-save-a-file-using-the-fetch-api-node-js)
+const downloadFile = (async (url, path) => {
+    const res = await fetch(url);
+    const fileStream = fs.createWriteStream(path);
+
+    await new Promise((resolve, reject) => {
+        res.body.pipe(fileStream);
+        res.body.on("error", reject);
+        fileStream.on("finish", resolve);
+    });
+});
+
 // Discord options
 const client = new DiscordJS.Client()
 const guildID = "695744844378800229"
@@ -97,7 +111,11 @@ const getApp = (guildId) => {
 }
 
 client.on("ready", async () => {
-    console.log("The bot is now ready")
+    console.log(client.user.username + " is now ready")
+
+    client.user.setActivity("music", {
+        type: "LISTENING"
+    })
 
     if (developMode) {
         var app = client.api.applications(client.user.id).guilds("695744844378800229").commands
@@ -156,13 +174,7 @@ client.on("ready", async () => {
                     description: "The title of the song",
                     required: true,
                     type: 3,
-                },
-                {
-                    name: "artist",
-                    description: "The artist of the song (optional)",
-                    required: false,
-                    type: 4,
-                },
+                }
             ]
         }
     })
@@ -178,11 +190,37 @@ client.on("ready", async () => {
                     description: "The title of the song",
                     required: true,
                     type: 3,
-                },
+                }
+            ]
+        }
+    })
+
+    // Secret play (only the user sending the command can see what's added)
+    await app.post({
+        data: {
+            name: "playnext",
+            description: "Play a song after the current one has finished playing",
+            options: [
                 {
-                    name: "artist",
-                    description: "The artist of the song (optional)",
-                    required: false,
+                    name: "title",
+                    description: "The title of the song",
+                    required: true,
+                    type: 3,
+                },
+            ]
+        }
+    })
+
+    // Choose a search result without reacting to a message (eg. for /secretplay)
+    await app.post({
+        data: {
+            name: "choice",
+            description: "Choose a search option (alt to choosing through a reaction and needed when using /secretplay)",
+            options: [
+                {
+                    name: "option",
+                    description: "The number of the song to choose from the search",
+                    required: true,
                     type: 4,
                 },
             ]
@@ -312,8 +350,30 @@ client.on("ready", async () => {
         else if (command === "play" || command === "playnext" || command === "secretplay") {
             console.log("Search initialised")
     
-            var guild = client.guilds.cache.get(interaction.guild_id)
-            voiceChannel = guild.member(interaction.member.user.id).voice.channel
+
+            // Get the voice channel of the user (or returns if not in a voice chanel)
+            try {
+                var guild = client.guilds.cache.get(interaction.guild_id)
+                voiceChannel = guild.member(interaction.member.user.id).voice.channel
+            } catch {
+                await client.api.interactions(interaction.id, interaction.token).callback.post({
+                    data: {
+                        type: 4,
+                        data: {
+                            flags: 64,
+                            embeds: [
+                                {
+                                    title: "Song choice cancelled",
+                                    description: "You are not in a voice chat, join one to be able to play music",
+                                    color: colors["red"]
+                                }
+                            ]
+                        }
+                    }
+                })
+                
+                return
+            }
 
             if (command === "secretplay") {
                 flagsValue = 64
@@ -334,13 +394,11 @@ client.on("ready", async () => {
                     if (queryResults[i]["title"] == "Tracks") {
                         var results = queryResults[i]["Metadata"]
                         
-                        console.log(JSON.stringify(results))
+                        // console.log(JSON.stringify(results))
 
                         break
                     }
                 }
-            
-                // console.log(plex_url(result["thumb"], "attachment"))
 
                 // Title:           title
                 // Artist:          originalTitle
@@ -410,13 +468,29 @@ client.on("ready", async () => {
                         invalid = true;
                     }
     
+                    var title = "Choose a song"
+
                     if (invalid) {
                         description = "There are no songs available with that name"
                         footer = null
                     } else {
                         description = null
-                        footer = {
-                            text: "Select a song by reaction with a number. To cancel the search, react with ❌"
+
+                        if (command === "secretplay") {
+                            footer = {
+                                text: "Select a song by typing /choice <search result number>"
+                            }
+                        } else {
+                            footer = {
+                                text: "Select a song by reaction with a number. To cancel the search, react with ❌"
+                            }
+                        }
+
+                        // If the first option should be chosen automatically
+                        if (results.length === 1 || command === "playnext") {
+                            title = "Song automatically chosen" + (command == "playnext" ? " and will play next" : "")
+                            description = null
+                            footer = null
                         }
                     }
     
@@ -446,6 +520,21 @@ client.on("ready", async () => {
                     // client.user.setActivity(result["title"] + " - " + result["grandparentTitle"])
                 }
             })
+        } else if (command === "choice") {
+            await client.api.interactions(interaction.id, interaction.token).callback.post({
+                data: {
+                    type: 4,
+                    data: {
+                        flags: 64,
+                        embeds: [
+                            {
+                                title: "This feature hasn't been implimented yet. Type /cancel to stop your search",
+                                color: colors["red"],
+                            }
+                        ]
+                    }
+                }
+            })
         } else if (command === "leave") {
             console.log("Leaving voice channel")
 
@@ -471,6 +560,9 @@ client.on("ready", async () => {
             client.user.setActivity("the waiting game", {
                 type: "PLAYING"
             })
+
+            // Set queue pointer to the final song
+            queuePointer = songQueue.length - 1
         } else if (command === "now") {
             console.log("Displaying the currently playing song")
 
@@ -481,9 +573,72 @@ client.on("ready", async () => {
             }
 
             if (songData["title"] == "") {
-                title = "<no title>"
+                var title = "<no title>"
             } else {
-                title = songData["title"]
+                var title = songData["title"]
+            }
+
+            // Send a checking message, and then a separate embed file
+            downloadFile(plex_url(songData["thumb"], "https"), './images/temp.png').then(function () {
+                // Create and send the embedded message
+                client.api.interactions(interaction.id, interaction.token).callback.post({
+                    data: {
+                        type: 4,
+                        data: {
+                            content: "Checking the song currently playing...",
+                            /* embeds: [
+                                {
+                                    title: "Now playing...",
+                                    color: colors["orange"],
+                                    thumbnail: {
+                                        url: "attachment://temp.png",
+                                    },
+                                    fields: [
+                                        {
+                                            name: title,
+                                            value: artist
+                                        }
+                                    ],
+                                }
+                            ] */
+                        }
+                    }
+                })
+
+
+                downloadFile(plex_url(songData["thumb"], "https"), './images/temp.png').then(function () {
+                    var channel = client.channels.cache.get(interaction.channel_id)
+                        
+                    // Create and send the embedded message
+                    channel.send(new DiscordJS.MessageEmbed()
+                        .setColor(colors["orange"])
+                        .setTitle('Now playing...')
+                        .addField(title, artist)
+                        
+                        .attachFiles(new DiscordJS.MessageAttachment('./images/temp.png'))
+                        .setThumbnail("attachment://temp.png")
+                    )
+                })
+            })
+        } else if (command === "skip") {
+            console.log("Skipping the current song      Current queue pointer: " + queuePointer)
+
+            var guild = client.guilds.cache.get(interaction.guild_id)
+            voiceChannel = guild.member(interaction.member.user.id).voice.channel
+            
+            try {
+                // If this throws an error then there is no song next
+                var tester = songData[queuePointer + 1]["title"]
+                var title = "Skipping song..."
+
+                queuePointer++
+                playSong()
+            } catch {
+                // If there are no songs left in the queue
+                var title = "No more songs in queue, leaving voice chat"
+
+                status = null
+                voiceChannel.leave()
             }
 
             await client.api.interactions(interaction.id, interaction.token).callback.post({
@@ -492,36 +647,31 @@ client.on("ready", async () => {
                     data: {
                         embeds: [
                             {
-                                title: "Now playing...",
+                                title: title,
                                 color: colors["orange"],
-                                fields: [
-                                    {
-                                        name: title,
-                                        value: artist
-                                    }
-                                ]
                             }
                         ]
                     }
                 }
             })
-        } else if (command === "skip") {
-            console.log("Skipping the current song")
+        } else if (command === "pause") {
+            dispatcher.pause()
 
-            queuePointer++
-
-            if (typeof songData[queuePointer] === "undefined") {
-                // If there are no songs left in the queue
-                var title = "No more songs in queue, leaving voice chat"
-
-                status = null
-                voiceChannel.leave()
-            } else {
-                // If there is a song next in the queue
-                var title = "Skipping song..."
-
-                playSong()
-            }
+            await client.api.interactions(interaction.id, interaction.token).callback.post({
+                data: {
+                    type: 4,
+                    data: {
+                        embeds: [
+                            {
+                                title: "Pausing music..",
+                                color: colors["orange"],
+                            }
+                        ]
+                    }
+                }
+            })
+        } else if (command === "resume") {
+            dispatcher.resume()
 
             await client.api.interactions(interaction.id, interaction.token).callback.post({
                 data: {
@@ -615,8 +765,20 @@ client.on("ready", async () => {
 client.on('message', message => {
     for (let embed of message.embeds) {
         // Add reaction emojis to selection (numbers and X to cancel)
-        if (embed.title == "Choose a song") {
-            message.react("❌")
+        if (embed.title == "Choose a song" || embed.title.startsWith("Song automatically chosen")) {
+            // If there is only one result, choose that one
+            if (embed.fields.length === 1) {
+                chooseResult(1, message)
+
+                // Add the correct reaction
+                message.reactions.removeAll()
+                message.react("1️⃣")
+
+                return
+            } else {
+                // Only add an X if there is more than 1 result
+                message.react("❌")
+            }
 
             for (let i = 1; i < embed.fields.length + 1; i++) {
                 message.react(numberToEmoji(i))
@@ -671,18 +833,7 @@ client.on('message', message => {
                     return
                 }
                 
-                /**
-                 * If a song was selected
-                 */
-                // Get the correct song id
-                songData = searchResults[emojiToNumber(emoji) - 1]
-
-                // Clear the play queue
-                searchResults = []
-                currentSearch = null
-                
-                // Get song information (each song in queue should have information for title, artist, album, thumbnail/album url, duration)
-                addSongToQueue(songData, message, searchGuildMember)
+                chooseResult(emojiToNumber(emoji), message)
 
                 return
             })
@@ -690,6 +841,12 @@ client.on('message', message => {
                 /**
                  * If a song searched timed out
                  */
+                console.log("Search timed out")
+
+                // Add the "failed interaction" emoji
+                message.reactions.removeAll()
+                message.react("❌")
+
                 searchResults = []
                 currentSearch = null
 
@@ -703,8 +860,25 @@ client.on('message', message => {
     }
 })
 
-// Currently just plays a song, without a queue
+// Add the corresponding search result to the song queue
+async function chooseResult(index, message) {
+    console.log("User chose result " + index + "!")
+
+    // Get the correct song id
+    songData = searchResults[index - 1]
+
+    // Clear the play queue
+    searchResults = []
+    currentSearch = null
+
+    // Get song information (each song in queue should have information for title, artist, album, thumbnail/album url, duration)
+    addSongToQueue(songData, message, searchGuildMember)
+}
+
+// Adds a song to the queue
 async function addSongToQueue(songData, message, member) {
+    console.log("Adding " + songData["title"] + " to queue")
+
     textChannel = message.channel
     voiceChannel = member.voice.channel
 
@@ -730,20 +904,30 @@ async function addSongToQueue(songData, message, member) {
     }
 
     if (songData["title"] == "") {
-        title = "<no title>"
+        var title = "<no title>"
     } else {
-        title = songData["title"]
+        var title = songData["title"]
     }
 
-    textChannel.send(new DiscordJS.MessageEmbed()
-        .setColor(colors["orange"])
-        .setTitle('Added to queue!')
-        .addField(title, artist)
-        // .setThumbnail(/*'https://i.imgur.com/wSTFkRM.png'*/ plex_url(songData["thumb"]))
-    )
-
-    // Add the song to the queue
-    songQueue.push(songData)
+    // Download the file and then wait till its downloaded to add it to the embedded message
+    downloadFile(plex_url(songData["thumb"], "https"), './images/temp.png').then(function () {
+        // Create and send the embedded message
+        textChannel.send(new DiscordJS.MessageEmbed()
+            .setColor(colors["aqua"])
+            .setTitle('Added to queue!')
+            .addField(title, artist)
+            
+            .attachFiles(new DiscordJS.MessageAttachment('./images/temp.png'))
+            .setThumbnail("attachment://temp.png")
+        )
+    })
+    
+    // Add the song to the queue or next if it is needed
+    if (message.embeds[0].title == "Song automatically chosen and will play next") {
+        songQueue.splice(queuePointer + 1, 0, songData)
+    } else {
+        songQueue.push(songData)
+    }
 
     // Play song if none playing
     if (status == null) {
@@ -764,26 +948,31 @@ async function playSong() {
     }
 
     if (songData["title"] == "") {
-        title = "<no title>"
+        var title = "<no title>"
     } else {
-        title = songData["title"]
+        var title = songData["title"]
     }
 
     await voiceChannel.join().then(connection => {
-        // console.log(          songData.Media[0].Part[0].key)
-        console.log(music_url(songData.Media[0].Part[0].key))
-        const dispatcher = connection.play(music_url(songData.Media[0].Part[0].key))
+        console.log("Playing: " + music_url(songData.Media[0].Part[0].key))
+        dispatcher = connection.play(music_url(songData.Media[0].Part[0].key))
 
         // Show that the track has changed
         dispatcher.on("start", () => {
             console.log('"' + title + '" is now playing!')
 
-            textChannel.send(new DiscordJS.MessageEmbed()
-                .setColor(colors["orange"])
-                .setTitle('Now playing!')
-                .addField(title, artist)
-                // .setThumbnail(/*'https://i.imgur.com/wSTFkRM.png'*/ plex_url(songData["thumb"]))
-            )
+            // Download the file and then wait till its downloaded to add it to the embedded message
+            downloadFile(plex_url(songData["thumb"], "https"), './images/temp.png').then(function () {
+                // Create and send the embedded message
+                textChannel.send(new DiscordJS.MessageEmbed()
+                    .setColor(colors["orange"])
+                    .setTitle('Now playing!')
+                    .addField(title, artist)
+                    
+                    .attachFiles(new DiscordJS.MessageAttachment('./images/temp.png'))
+                    .setThumbnail("attachment://temp.png")
+                )
+            })
 
             client.user.setActivity(title, {
                 type: "PLAYING"
@@ -795,7 +984,7 @@ async function playSong() {
             console.log('"' + title + '" has finished playing!')
             
             // Always increase the queue pointer, ready for the next song
-            // queuePointer++
+            queuePointer++
 
             if (typeof songData[queuePointer + 1] === "undefined") {
                 // If there are no songs left in the queue
