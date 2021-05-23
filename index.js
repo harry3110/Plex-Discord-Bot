@@ -28,6 +28,9 @@ var searchGuildMember = null
 var textChannel = null
 var voiceChannel = null
 
+// To be able to pause and resume from anywhere
+var dispatcher
+
 // Complex
 // var plex = new PlexAPI({
 //     hostname: process.env.HOSTNAME,
@@ -47,6 +50,7 @@ var voiceChannel = null
 
 const plex_url = (middle, protocol = "http") => protocol + "://" + process.env.HOSTNAME + ":" + process.env.PORT + "" + middle + "?X-Plex-Token=" + process.env.PLEX_TOKEN
 const music_url = (middle) => "http://arcadia:32400" + middle + "?X-Plex-Token=" + process.env.PLEX_TOKEN
+const hubSearch_url = (query) => "/hubs/search?query=" + query + "&includeExternalMedia=0&limit=" + process.env.CHOICE //&X-Plex-Token=${process.env.PLEX_TOKEN}"
 
 // Functions
 const numberToEmoji = function (num) {
@@ -261,10 +265,10 @@ client.on("ready", async () => {
                 })
     
                 var guild = client.guilds.cache.get(interaction.guild_id)
-                var voiceChannel = guild.member(interaction.member.user.id).voice.channel
+                voiceChannel = guild.member(interaction.member.user.id).voice.channel
     
                 await voiceChannel.join().then(connection => {
-                    const dispatcher = connection.play("./hello.flac")
+                    dispatcher = connection.play("./hello.flac")
     
                     dispatcher.on("finish", () => {
                         voiceChannel.leave()
@@ -291,6 +295,9 @@ client.on("ready", async () => {
         }
         else if (command === "play" || command === "playnext" || command === "secretplay") {
             console.log("Search initialised")
+    
+            var guild = client.guilds.cache.get(interaction.guild_id)
+            voiceChannel = guild.member(interaction.member.user.id).voice.channel
 
             if (command === "secretplay") {
                 flagsValue = 64
@@ -303,8 +310,20 @@ client.on("ready", async () => {
             /**
              * Plex search query
              */
-            plex.query("/search?type=10&query=" + songTitle + "&X-Plex-Container-Start=0&X-Plex-Container-Size=" + process.env.CHOICE).then(async function (MediaContainerResult) {
-                var results = MediaContainerResult["MediaContainer"]["Metadata"]
+            plex.query(hubSearch_url(songTitle)).then(async function (MediaContainerResult) { 
+                var queryResults = MediaContainerResult["MediaContainer"]["Hub"]
+
+                // Get the results from the array
+                for (let i = 0; i < queryResults.length; i++) {                    
+                    if (queryResults[i]["title"] == "Tracks") {
+                        var results = queryResults[i]["Metadata"]
+                        
+                        console.log(JSON.stringify(results))
+
+                        break
+                    }
+                }
+            
                 // console.log(plex_url(result["thumb"], "attachment"))
 
                 // Title:           title
@@ -334,10 +353,7 @@ client.on("ready", async () => {
                         }
                     })
                     
-                } /*else if (results.length == 1) {
-                    // @TODO Automatically choose the first option, if there is only one available
-                    
-                }*/ else {
+                } else {
                     // Used in case the search is cancelled
                     currentSearch = songTitle
 
@@ -346,16 +362,24 @@ client.on("ready", async () => {
                     searchGuildMember = guild.member(interaction.member.user.id)
 
                     // Catch if there are no items in the array
-                    try {    
+                    try {
                         for (var i = 0; i < results.length; i++) {
+                            // Get the available artist
                             if (results[i]["originalTitle"] == undefined) {
                                 var artist = results[i]["grandparentTitle"]
                             } else {
                                 var artist = results[i]["originalTitle"]
                             }
+
+                            // Does the same as above, if the above doesn't work
+                            // try {
+                            //     var artist = results[i]["grandparentTitle"]
+                            // } catch {
+                            //     var artist = results[i]["originalTitle"]
+                            // }
     
                             // searchResults.push(results[i]["Media"][0]["id"])
-                            searchResults.push(MediaContainerResult.MediaContainer.Metadata[i])
+                            searchResults.push(results[i])
         
                             fields.push({
                                 name: "[" + (i + 1) + "] " + results[i]["title"],
@@ -387,7 +411,7 @@ client.on("ready", async () => {
                                 flags: flagsValue,
                                 embeds: [
                                     {
-                                        title: "Choose a song",
+                                        title: title,
                                         description: description,
                                         color: colors["aqua"],
                                         fields: fields,
@@ -739,7 +763,7 @@ async function playSong() {
             console.log('"' + title + '" is now playing!')
 
             textChannel.send(new DiscordJS.MessageEmbed()
-                .setColor(colors["aqua"])
+                .setColor(colors["orange"])
                 .setTitle('Now playing!')
                 .addField(title, artist)
                 // .setThumbnail(/*'https://i.imgur.com/wSTFkRM.png'*/ plex_url(songData["thumb"]))
@@ -750,11 +774,12 @@ async function playSong() {
             })
         })
 
+        // Changes the song
         dispatcher.on("finish", () => {
             console.log('"' + title + '" has finished playing!')
             
             // Always increase the queue pointer, ready for the next song
-            queuePointer++
+            // queuePointer++
 
             if (typeof songData[queuePointer + 1] === "undefined") {
                 // If there are no songs left in the queue
