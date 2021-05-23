@@ -296,7 +296,32 @@ client.on("ready", async () => {
         const { name, options } = interaction.data
         const command = name.toLowerCase()
 
-        // console.log(options)
+        var guild = client.guilds.cache.get(interaction.guild_id)
+
+            // Checks if the user is in a voice channel and if not, kicks them out
+        try {
+            voiceChannel = guild.member(interaction.member.user.id).voice.channel
+        } catch {
+            await client.api.interactions(interaction.id, interaction.token).callback.post({
+                data: {
+                    type: 4,
+                    data: {
+                        flags: 64,
+                        embeds: [
+                            {
+                                title: "Error!",
+                                description: "You're not in a voice channel, join one to play music!",
+                                color: colors["red"],
+                            }
+                        ]
+                    }
+                }
+            })
+
+            return
+        }
+        
+
 
         if (command === "ping") {
             await reply(interaction, "Pong!")
@@ -555,7 +580,7 @@ client.on("ready", async () => {
             var guild = client.guilds.cache.get(interaction.guild_id)
             var voiceChannel = guild.member(interaction.member.user.id).voice.channel
 
-            await voiceChannel.leave()
+            voiceChannel.leave()
 
             client.user.setActivity("the waiting game", {
                 type: "PLAYING"
@@ -563,6 +588,8 @@ client.on("ready", async () => {
 
             // Set queue pointer to the final song
             queuePointer = songQueue.length - 1
+
+            console.log(queuePointer)
         } else if (command === "now") {
             console.log("Displaying the currently playing song")
 
@@ -605,10 +632,9 @@ client.on("ready", async () => {
                     }
                 })
 
-
                 downloadFile(plex_url(songData["thumb"], "https"), './images/temp.png').then(function () {
                     var channel = client.channels.cache.get(interaction.channel_id)
-                        
+
                     // Create and send the embedded message
                     channel.send(new DiscordJS.MessageEmbed()
                         .setColor(colors["orange"])
