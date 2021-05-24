@@ -2,13 +2,15 @@ const DiscordJS = require('discord.js')
 const PlexAPI = require('plex-api')
 let fs = require('fs');
 const fetch = require('node-fetch');
+const arrayMove = require('array-move');
 require('dotenv').config()
 
 // Aqua color
 colors = {
-    'aqua': 0x5abdd1,       // For search and queue
-    'red': 0xa11a1a,        // For errors
-    'orange': 0xdbbb1a      // Currently playing
+    'aqua': 0x5abdd1,       // Search and queue
+    'red': 0xa11a1a,        // Eerrors
+    'orange': 0xdbbb1a,     // Currently playing
+    'green': 0x11ba49       // Bot ready message
 }
 
 // Plex options
@@ -111,8 +113,14 @@ const getApp = (guildId) => {
     return app
 }
 
-client.on("ready", async () => {
-    console.log(client.user.username + " is now ready")
+client.on("ready", async (c) => {
+    console.log(client.user.username + " is now ready (1/2)")
+
+    // Messages a channel to say that the bot has started to load
+    /* client.channels.cache.get(process.env.ONREADYCHANNEL).send(new DiscordJS.MessageEmbed()
+        .setColor(colors["green"])
+        .setTitle("I am waking up...")
+    ) */
 
     client.user.setActivity("music", {
         type: "LISTENING"
@@ -124,14 +132,18 @@ client.on("ready", async () => {
         var app = client.api.applications(client.user.id).commands
     }
 
-    // const commands = await app.get();
+    // Remove all commands
+    /* const commands = await app.get();
 
-    // commands.forEach(command => {
-    //     try {
-    //         app.commands(command["id"]).delete()
-    //         console.log("Deleting: " + command["name"])
-    //     } catch { }
-    // });
+    commands.forEach(command => {
+        try {
+            app.commands(command["id"]).delete()
+            console.log("Deleting: " + command["name"])
+        } catch { }
+    }); */
+
+    // Also (I think) removes all commands
+    // app.set([])
 
     // console.log(commands)
 
@@ -169,8 +181,8 @@ client.on("ready", async () => {
     // Secret play (only the user sending the command can see what's added)
     await app.post({
         data: {
-            name: "secretplay",
-            description: "Play a song (or add it to the queue) without announcing it to others",
+            name: "play",
+            description: "Play a song (or add it to the queue)",
             options: [
                 {
                     name: "title",
@@ -185,8 +197,8 @@ client.on("ready", async () => {
     // Secret play (only the user sending the command can see what's added)
     await app.post({
         data: {
-            name: "play",
-            description: "Play a song (or add it to the queue)",
+            name: "secretplay",
+            description: "Play a song (or add it to the queue) without announcing it to others",
             options: [
                 {
                     name: "title",
@@ -247,7 +259,7 @@ client.on("ready", async () => {
                 {
                     name: "option",
                     description: "The number of the song to choose from the search",
-                    required: true,
+                    // required: true,
                     type: 4,
                 },
             ]
@@ -290,7 +302,25 @@ client.on("ready", async () => {
     await app.post({
         data: {
             name: "queue",
-            description: "View the current song queue"
+            description: "View the current song queue",
+            options: [
+                {
+                    name: "numbered",
+                    description: "Show the numbered positions of songs in the queue (optional, default is false)",
+                    type: 3,
+                    required: false,
+                    choices: [
+                        {
+                            name: "false",
+                            value: "false"
+                        },
+                        {
+                            name: "true",
+                            value: "true"
+                        }
+                    ]
+                }
+            ]
         }
     })
 
@@ -316,6 +346,44 @@ client.on("ready", async () => {
         data: {
             name: "cancel",
             description: "Force cancels the current search in case it gets stuck"
+        }
+    })
+
+    // Move a song from one position to another in the queue
+    await app.post({
+        data: {
+            name: "move",
+            description: "Move a song from one position to another in the queue",
+            options: [
+                {
+                    name: "from",
+                    description: "Move the song in this position",
+                    required: true,
+                    type: 4,
+                },
+                {
+                    name: "to",
+                    description: "To this position in the queue",
+                    required: true,
+                    type: 4,
+                }
+            ]
+        }
+    })
+
+    // Remove a song from a /queue position
+    await app.post({
+        data: {
+            name: "remove",
+            description: "Remove a song from a /queue position",
+            options: [
+                {
+                    name: "position",
+                    description: "Remove a song in this position",
+                    required: true,
+                    type: 4,
+                }
+            ]
         }
     })
 
@@ -778,15 +846,21 @@ client.on("ready", async () => {
                     }
     
                     // Get the song title
-                    if (songData["title"] == "") {
+                    if (songQueue[i]["title"] == "") {
                         var title = "<no title>"
                     } else {
-                        var title = songData["title"]
+                        var title = songQueue[i]["title"]
                     }
+
+                    try {
+                        if (options[0]['value'] == "true") {
+                            title = `[${(i - queuePointer == 0 ? "Currently Playing" : i - queuePointer)}] ` + title
+                        }
+                    } catch { }
     
                     fields.push({
-                        name: songQueue[i]["title"],
-                        value: artist + " (" + songQueue[i]["parentTitle"] + ")"
+                        name: title,
+                        value: artist // + " (" + songQueue[i]["parentTitle"] + ")"
                     })
                 }
             } else {
@@ -799,10 +873,10 @@ client.on("ready", async () => {
                     type: 4,
                     data: {
                         // flags: 64,
-                        description: description,
                         embeds: [
                             {
                                 title: "Song queue",
+                                description: description,
                                 color: colors["orange"],
                                 fields: fields,
                                 footer: {
@@ -813,8 +887,132 @@ client.on("ready", async () => {
                     }
                 }
             })
+        } else if (command === "move") {
+
+            // Check to see if both options are higher than 0, they do not equal each other and are not larger than the queue length
+            if (!(options[0].value > 0 && options[1].value > 0 && options[0].value !== options[1].value && options[0].value < songQueue.length && options[1].value < songQueue.length)) {
+                await client.api.interactions(interaction.id, interaction.token).callback.post({
+                    data: {
+                        type: 4,
+                        data: {
+                            flags: 64,
+                            embeds: [
+                                {
+                                    title: "Song position not moved",
+                                    description: "The 'from' and 'to' values must both be above 0 and are not equal to each other",
+                                    color: colors["red"]
+                                }
+                            ]
+                        }
+                    }
+                })
+
+                return
+
+            }
+            console.log(`Moving song from ${options[0].value + queuePointer} to ${options[1].value + queuePointer}`)
+
+            // Move the song
+            songQueue = arrayMove(songQueue, options[0].value + queuePointer, options[1].value + queuePointer)
+
+            var i = options[0].value + queuePointer
+
+            // Get the artist
+            if (songQueue[i]["originalTitle"] == undefined) {
+                var artist = songQueue[i]["grandparentTitle"]
+            } else {
+                var artist = songQueue[i]["originalTitle"]
+            }
+
+            // Message the user about the move
+            await client.api.interactions(interaction.id, interaction.token).callback.post({
+                data: {
+                    type: 4,
+                    data: {
+                        embeds: [
+                            {
+                                title: "Moved song position",
+                                description: `...from ${options[0].value} to ${options[1].value}`,
+                                color: colors["aqua"],
+                                fields: [
+                                    {
+                                        name: songQueue[i]["title"],
+                                        value: artist
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            })
+        } else if (command === "remove") {
+            if (!(options[0].value > 0 && options[0].value < songQueue.length)) {
+                await client.api.interactions(interaction.id, interaction.token).callback.post({
+                    data: {
+                        type: 4,
+                        data: {
+                            flags: 64,
+                            embeds: [
+                                {
+                                    title: "Song not removed",
+                                    description: "The value must be more than 0!",
+                                    color: colors["red"]
+                                }
+                            ]
+                        }
+                    }
+                })
+
+                return
+
+            }
+
+            // Get the song index
+            var i = options[0].value + queuePointer
+
+            // Get the artist
+            if (songQueue[i]["originalTitle"] == undefined) {
+                var artist = songQueue[i]["grandparentTitle"]
+            } else {
+                var artist = songQueue[i]["originalTitle"]
+            }
+
+            // Get the song title
+            var title = songQueue[i]["title"]
+            
+            // Remove song at index
+            songQueue.splice(i, 1)
+            
+            // Alert the user of the deleted song
+            await client.api.interactions(interaction.id, interaction.token).callback.post({
+                data: {
+                    type: 4,
+                    data: {
+                        embeds: [
+                            {
+                                title: "Removed song at position " + options[0].value,
+                                color: colors["aqua"],
+                                fields: [
+                                    {
+                                        name: title,
+                                        value: artist
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            })
         }
     })
+
+    console.log(client.user.username + " is now fully ready (2/2)")
+
+    client.channels.cache.get(process.env.ONREADY_CHANNEL).send(new DiscordJS.MessageEmbed()
+        .setColor(colors["green"])
+        .setTitle("I am ready to DJ")
+        .setDescription("or present, whatever you want to call it..")
+    )
 })
 
 client.on('message', message => {
@@ -917,6 +1115,10 @@ client.on('message', message => {
 // Add the corresponding search result to the song queue
 async function chooseResult(index, message) {
     console.log("User chose result " + index + "!")
+
+    if (process.env.DELETE_AFTER_SEARCH == true) {
+        message.delete(200)
+    }
 
     // Get the correct song id
     songData = searchResults[index - 1]

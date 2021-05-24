@@ -10,6 +10,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "array-move": "^3.0.1",
     "buffer-to-arraybuffer": "0.0.6",
     "discord.js": "^12.5.3",
     "dotenv": "^9.0.2",
