@@ -100,7 +100,7 @@ const downloadFile = (async (url, path) => {
 
 // Discord options
 const client = new DiscordJS.Client()
-const guildID = "695744844378800229"
+const guildID = process.env.GUILD_ID
 const developMode = true;
 
 const getApp = (guildId) => {
@@ -127,7 +127,7 @@ client.on("ready", async (c) => {
     })
 
     if (developMode) {
-        var app = client.api.applications(client.user.id).guilds("695744844378800229").commands
+        var app = client.api.applications(client.user.id).guilds(guildID).commands
     } else {
         var app = client.api.applications(client.user.id).commands
     }
@@ -598,7 +598,7 @@ client.on("ready", async (c) => {
                             }
                         } else {
                             footer = {
-                                text: "Select a song by reaction with a number. To cancel the search, react with ❌"
+                                text: "Select a song by reacting with a number. To cancel the search, react with ❌"
                             }
                         }
 
